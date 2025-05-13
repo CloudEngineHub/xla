@@ -2896,6 +2896,66 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::ValuesIn(AllDevicesToTest())),
     TritonSupportTestTypeAndDeviceToString);
 
+using RecvOpsTest = TritonSupportTestWithTypeAndDeviceParam;
+
+TEST_P(RecvOpsTest, RecvAndRecvDone) {
+  auto [data_type, cc] = GetParam();
+  const std::string kHloTestTemplate = R"(
+    ENTRY triton_computation {
+      token0 = token[] after-all()
+      %recv_op = ($0[], u32[], token[]) recv(token[] %token0), channel_id=15
+      ROOT %recv_done_op = ($0[], token[]) recv-done(%recv_op), channel_id=15
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti_recv,
+                          ParseTemplateAndGetInstruction(
+                              kHloTestTemplate, data_type, HloOpcode::kRecv));
+  RunSupportTestMultipleOutputTiles(std::move(ti_recv),
+                                    /*output_tile_sizes=*/{{}, {}}, cc);
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti_recv_done,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, data_type,
+                                     HloOpcode::kRecvDone));
+  RunSupportTestMultipleOutputTiles(std::move(ti_recv_done),
+                                    /*output_tile_sizes=*/{{}, {}}, cc);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    RecvOpsSuite, RecvOpsTest,
+    ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
+                       ::testing::ValuesIn(AllDevicesToTest())),
+    TritonSupportTestTypeAndDeviceToString);
+
+using SendOpsTest = TritonSupportTestWithTypeAndDeviceParam;
+
+TEST_P(SendOpsTest, SendAndSendDone) {
+  auto [data_type, cc] = GetParam();
+  const std::string kHloTestTemplate = R"(
+    ENTRY triton_computation {
+      data = $0[10] parameter(0)
+      token0 = token[] after-all()
+      %send_op = ($0[10], u32[], token[]) send(data, token0), channel_id=77
+      ROOT %send_done_op = token[] send-done(%send_op), channel_id=77
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti_send,
+                          ParseTemplateAndGetInstruction(
+                              kHloTestTemplate, data_type, HloOpcode::kSend));
+  RunSupportTestMultipleOutputTiles(std::move(ti_send),
+                                    /*output_tile_sizes=*/{{1}, {}, {}}, cc);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti_send_done,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, data_type,
+                                     HloOpcode::kSendDone));
+  RunSupportTest(std::move(ti_send_done), /*output_tile_sizes=*/{}, cc);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SendOpsSuite, SendOpsTest,
+    ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
+                       ::testing::ValuesIn(AllDevicesToTest())),
+    TritonSupportTestTypeAndDeviceToString);
+
 class StochasticConvertTest
     : public TritonSupportTest,
       public ::testing::WithParamInterface<
@@ -2986,13 +3046,9 @@ constexpr std::array kUnsupportedOps = {
     HloOpcode::kGather,
     HloOpcode::kPad,
     HloOpcode::kRaggedDot,
-    HloOpcode::kRecv,
-    HloOpcode::kRecvDone,
     HloOpcode::kReduceWindow,
     HloOpcode::kScatter,
     HloOpcode::kSelectAndScatter,
-    HloOpcode::kSend,
-    HloOpcode::kSendDone,
     HloOpcode::kSetDimensionSize,
     HloOpcode::kSort,
     // go/keep-sorted end
@@ -3046,6 +3102,10 @@ absl::flat_hash_set<HloOpcode> AllTestedOpcodes() {
   ret.emplace(HloOpcode::kFusion);
   ret.emplace(HloOpcode::kInfeed);
   ret.emplace(HloOpcode::kOutfeed);
+  ret.emplace(HloOpcode::kRecv);
+  ret.emplace(HloOpcode::kRecvDone);
+  ret.emplace(HloOpcode::kSend);
+  ret.emplace(HloOpcode::kSendDone);
   ret.emplace(HloOpcode::kStochasticConvert);
   ret.emplace(HloOpcode::kTopK);
   ret.emplace(HloOpcode::kTriangularSolve);
